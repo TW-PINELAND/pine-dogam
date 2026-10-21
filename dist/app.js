@@ -9,6 +9,15 @@ const esc = x => String(x ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;',
 const num = n => Number(n).toLocaleString('ko-KR');
 const rate = n => Number(n).toLocaleString('ko-KR',{maximumFractionDigits:8})+'%';
 const normalize = s => s.replace(/\s/g,'');
+const stats={stab:'찌르기 공격력',slash:'베기 공격력',magic:'마법 공격력',defense:'물리 방어력',magic_defense:'마법 방어력',accuracy:'명중률',critical:'크리티컬',evasion:'회피율',agility:'민첩성',durability:'내구도',hardness:'경도'};
+function statValue(e,key){const label=stats[key];if(!label)return null;const match=(e.data.options||'').match(new RegExp(label+' (-?\\d+)~(-?\\d+)'));return match?Number(match[2]):null;}
+function equipmentPanel(text){return '<div class="game-tooltip">'+text.split('\n').map(line=>{
+  if(!line.trim())return '<div class="tooltip-gap"></div>';
+  if(['착용 정보','능력치'].includes(line))return `<h4>${esc(line)}</h4>`;
+  const match=line.match(/^(.+?) (-?\d+)~(-?\d+) \[한계\s*:\s*(-?\d+)\]$/);
+  if(match)return `<div class="stat-line"><span>${esc(match[1])}</span><strong>${match[2]===match[3]?esc(match[2]):esc(match[2]+' ~ '+match[3])}</strong><small>한계 ${esc(match[4])}</small></div>`;
+  return `<p class="${/필요 레벨|수리:|합성 가능/.test(line)?'constraint':'wear-line'}">${esc(line)}</p>`;
+}).join('')+'</div>';}
 function image(path) {
   return path && /^assets\/[A-Za-z0-9_./-]+\.png$/.test(path) && !path.includes('..') ? `<img loading="lazy" src="${esc(path)}" alt="">` : '<span aria-hidden="true">✧</span>';
 }
@@ -22,12 +31,16 @@ async function search() {
   const version=++state.version;
   const query=normalize($('#search').value.trim()),cat=$('#category').value,max=$('#level').value,min=$('#minlevel').value,sub=$('#subcategory').value;
   const flag={recipes:'has_recipe',drops:'has_drop',draws:'has_draw'}[state.mode];
+  const stat=state.mode==='equipment'?$('#stat').value:'',statMin=$('#stat-min').value,direction=$('#stat-order').value;
   $('#count').textContent='검색 중…'; $('#list').setAttribute('aria-busy','true'); $('#prev').disabled=true;$('#next').disabled=true;
   try {
     let rows,total;
     if(preview){
       if(!state.local){const r=await fetch('/__preview/entries.json');if(!r.ok)throw new Error('preview');state.local=await r.json();}
-      const all=state.local.filter(e=>e.kind===state.kind && (!flag||e.data[flag]) && (state.mode!=='equipment'||e.category==='장비') && (!query||e.search_name.includes(query)) && (!cat||e.category===cat) && (!sub||e.data.subcategory===sub) && (!min||(e.level!=null&&e.level>=Number(min))) && (!max || (e.level!=null&&e.level<=Number(max)))).sort((a,b)=>a.name.localeCompare(b.name,'ko')||a.id.localeCompare(b.id));
+      const all=state.local.filter(e=>e.kind===state.kind && (!flag||e.data[flag]) && (state.mode!=='equipment'||e.category==='장비') && (!query||e.search_name.includes(query)) && (!cat||e.category===cat) && (!sub||e.data.subcategory===sub) && (!min||(e.level!=null&&e.level>=Number(min))) && (!max || (e.level!=null&&e.level<=Number(max))) && (!stat||statValue(e,stat)!=null) && (!stat||statMin===''||statValue(e,stat)>=Number(statMin))).sort((a,b)=>{
+        if(stat){const delta=(statValue(a,stat)-statValue(b,stat))*(direction==='desc'?-1:1);if(delta)return delta;}
+        return a.name.localeCompare(b.name,'ko')||a.id.localeCompare(b.id);
+      });
       total=all.length;rows=all.slice(state.page*PAGE_SIZE,(state.page+1)*PAGE_SIZE);
     } else {
       const p=new URLSearchParams({select:'kind,id,name,category,level,data',kind:'eq.'+state.kind,order:'name.asc,id.asc',offset:state.page*PAGE_SIZE,limit:PAGE_SIZE});
@@ -37,19 +50,21 @@ async function search() {
       if(sub)p.set('data->>subcategory','eq.'+sub);
       if(flag)p.set('data->>'+flag,'eq.true');
       if(min)p.append('level','gte.'+Number(min));if(max)p.append('level','lte.'+Number(max));
+      if(stat){p.set('order',`stat_${stat}.${direction}.nullslast,name.asc,id.asc`);p.set('stat_'+stat,'not.is.null');if(statMin!=='')p.append('stat_'+stat,'gte.'+Number(statMin));}
       const result=await request(p,true);rows=result.rows;total=result.total;
     }
     if(version!==state.version)return;
     state.rows=rows;state.total=total;
     $('#connection').textContent=preview?'미리보기 · 로컬 원본 데이터로 표시 중입니다. Supabase 등록 후 공개 버전에서 사용할 수 있습니다.':'';
     $('#count').textContent=`검색 결과 ${num(total)}건`;
-    $('#list').innerHTML=rows.length?rows.map((e,n)=>`<button class="row ${state.selected===e.kind+':'+e.id?'selected':''}" data-row="${n}"><span class="icon">${image(e.data.image)}</span><span class="text"><b>${esc(e.name)}</b><small>${esc(e.data.subcategory||e.category)} · ${esc(level(e))}</small></span><span class="arrow" aria-hidden="true">›</span></button>`).join(''):'<div class="errorbox">검색 결과가 없습니다.<br>이름 일부를 입력하거나 분류와 레벨 조건을 초기화해 보세요.</div>';
+    $('#sort-label').textContent=stat?stats[stat]+(direction==='desc'?' 높은 순':' 낮은 순')+' · 기본 최대값':'이름순 정렬';
+    $('#list').innerHTML=rows.length?rows.map((e,n)=>`<button class="row ${state.selected===e.kind+':'+e.id?'selected':''}" data-row="${n}"><span class="icon">${image(e.data.image)}</span><span class="text"><b>${esc(e.name)}</b><small>${esc(e.data.subcategory||e.category)} · ${esc(level(e))}</small>${stat?`<span class="stat-badge">${esc(stats[stat])} ${statValue(e,stat)}</span>`:''}</span><span class="arrow" aria-hidden="true">›</span></button>`).join(''):'<div class="errorbox">검색 결과가 없습니다.<br>이름 일부를 입력하거나 분류와 레벨 조건을 초기화해 보세요.</div>';
     $('#page').textContent=`${state.page+1} / ${Math.max(1,Math.ceil(total/PAGE_SIZE))}`;
     $('#prev').disabled=state.page===0;$('#next').disabled=(state.page+1)*PAGE_SIZE>=total;
   } catch(error){
     if(version!==state.version)return;
     $('#count').textContent='데이터 연결 확인 필요';
-    const message=error.status===404?'Supabase에 도감 데이터가 아직 등록되지 않았습니다. 함께 제공된 안내서에 따라 SQL 파일을 순서대로 실행해 주세요.':error.status===401||error.status===403?'Supabase 연결 키 또는 읽기 권한을 확인해 주세요.':'연결이 지연되거나 서버에 접근할 수 없습니다. 인터넷 연결과 Supabase 프로젝트 상태를 확인해 주세요.';
+    const message=error.status===400&&stat?'장비 정렬 설정이 아직 등록되지 않았습니다. Supabase에서 03_equipment_filters.sql을 한 번 실행해 주세요.':error.status===404?'Supabase에 도감 데이터가 아직 등록되지 않았습니다. 함께 제공된 안내서에 따라 SQL 파일을 순서대로 실행해 주세요.':error.status===401||error.status===403?'Supabase 연결 키 또는 읽기 권한을 확인해 주세요.':'연결이 지연되거나 서버에 접근할 수 없습니다. 인터넷 연결과 Supabase 프로젝트 상태를 확인해 주세요.';
     $('#list').innerHTML=`<div class="errorbox">${message}<p><button id="retry">다시 연결</button></p></div>`;
     $('#retry').onclick=search;
   } finally {if(version===state.version)$('#list').removeAttribute('aria-busy');}
@@ -65,7 +80,7 @@ function show(e) {
     html+=d.drops.length?d.drops.map(m=>related('monster',m.id,m.name,rate(m.rate),m.image)).join(''):'<p class="note">이 데이터에 등록된 직접 드롭 정보가 없습니다.</p>';
   } else if(e.kind==='item'){
     html+=`<p class="description">${esc(d.description||'등록된 설명이 없습니다.')}</p>`;
-    if(d.options)html+=`<h3>장비 능력치</h3><div class="options">${esc(d.options)}</div>`;
+    if(d.options)html+=`<h3>장비 능력치</h3>${equipmentPanel(d.options)}`;
     html+=`<h3>조합식 <span class="note">${d.recipes.length}개</span></h3>`;
     html+=d.recipes.length?d.recipes.map((r,n)=>`<div class="recipe"><div class="recipe-head"><b>제작 방법 ${n+1}</b><span>기본 성공률 ${num(r.success)}%</span></div>${r.ingredients.map(i=>related('item',i.id,i.name,num(i.quantity)+'개',i.image)).join('')}<div class="linkrow"><b>필요 SEED</b><span>${num(r.seed)}</span></div></div>`).join(''):'<p class="note">이 데이터에 등록된 조합식이 없습니다.</p>';
     html+='<h3>드롭 몬스터</h3>';
@@ -93,10 +108,12 @@ let timer;
 $('#search').addEventListener('input',()=>{clearTimeout(timer);++state.version;timer=setTimeout(()=>{state.page=0;search();},250);});
 function refreshSubcategories(){const cat=$('#category').value;const subs=cat?(state.metadata[cat]||[]):[...new Set(Object.values(state.metadata).flat())].sort();$('#subcategory').innerHTML='<option value="">전체 하위 분류</option>'+subs.map(c=>`<option>${esc(c)}</option>`).join('');}
 for(const id of ['category','subcategory','minlevel','level'])$('#'+id).addEventListener('change',()=>{if(id==='category')refreshSubcategories();state.page=0;search();});
+$('#stat').innerHTML='<option value="">이름순</option>'+Object.entries(stats).map(([key,label])=>`<option value="${key}">${label}</option>`).join('');
+for(const id of ['stat','stat-order','stat-min'])$('#'+id).addEventListener('change',()=>{state.page=0;search();});
 $('#prev').onclick=()=>{if(state.page){state.page--;search();}};
 $('#next').onclick=()=>{if((state.page+1)*PAGE_SIZE<state.total){state.page++;search();}};
 $('#reset').onclick=()=>{switchMode(state.mode);search();};
-function switchMode(mode){state.mode=mode;state.kind=mode==='monster'?'monster':'item';state.page=0;state.selected=null;++state.detailVersion;$('#search').value='';$('#category').value=mode==='equipment'?'장비':'';$('#level').value='';$('#minlevel').value='';$('#category').disabled=mode==='monster'||mode==='equipment';$('#subcategory').disabled=mode==='monster';refreshSubcategories();$('#mode-title').textContent=modes[mode][0];$('#mode-description').textContent=modes[mode][1];$('#search').placeholder=mode==='monster'?'몬스터 이름 검색':'아이템 이름 검색';$('#detail').innerHTML='<div class="empty"><span>✧</span><h2>목록에서 항목을 선택하세요.</h2><p>이미지와 상세 정보를 확인할 수 있습니다.</p></div>';document.querySelectorAll('[data-mode]').forEach(b=>{b.classList.toggle('active',b.dataset.mode===mode);b.setAttribute('aria-pressed',b.dataset.mode===mode);});}
+function switchMode(mode){$('#equipment-filters').hidden=mode!=='equipment';$('#stat').value='';$('#stat-min').value='';$('#stat-order').value='desc';state.mode=mode;state.kind=mode==='monster'?'monster':'item';state.page=0;state.selected=null;++state.detailVersion;$('#search').value='';$('#category').value=mode==='equipment'?'장비':'';$('#level').value='';$('#minlevel').value='';$('#category').disabled=mode==='monster'||mode==='equipment';$('#subcategory').disabled=mode==='monster';refreshSubcategories();$('#mode-title').textContent=modes[mode][0];$('#mode-description').textContent=modes[mode][1];$('#search').placeholder=mode==='monster'?'몬스터 이름 검색':'아이템 이름 검색';$('#detail').innerHTML='<div class="empty"><span>✧</span><h2>목록에서 항목을 선택하세요.</h2><p>이미지와 상세 정보를 확인할 수 있습니다.</p></div>';document.querySelectorAll('[data-mode]').forEach(b=>{b.classList.toggle('active',b.dataset.mode===mode);b.setAttribute('aria-pressed',b.dataset.mode===mode);});}
 document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>{switchMode(b.dataset.mode);search();});
 document.querySelectorAll('[data-query]').forEach(b=>b.onclick=()=>{switchMode('item');$('#search').value=b.dataset.query;search();});
 document.addEventListener('keydown',e=>{if(e.key==='/'&&!['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)){e.preventDefault();$('#search').focus();}});
