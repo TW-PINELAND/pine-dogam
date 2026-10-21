@@ -106,6 +106,24 @@ $('#list').addEventListener('click',ev=>{const b=ev.target.closest('[data-row]')
 $('#detail').addEventListener('click',ev=>{const b=ev.target.closest('[data-id]');if(b)openEntry(b.dataset.kind,b.dataset.id);});
 let timer;
 $('#search').addEventListener('input',()=>{clearTimeout(timer);++state.version;timer=setTimeout(()=>{state.page=0;search();},250);});
+$('#search').addEventListener('keydown',event=>{
+  // Do not submit while the Korean keyboard is still composing a character.
+  if(event.key!=='Enter'||event.isComposing||event.keyCode===229)return;
+  event.preventDefault();
+  clearTimeout(timer);
+  state.page=0;
+  search();
+  event.currentTarget.blur();
+});
+// Keep single-finger scrolling; prevent page pinch gestures on touch devices.
+function preventMobileZoom(event){
+  if(window.matchMedia('(pointer: coarse)').matches&&event.cancelable)event.preventDefault();
+}
+document.addEventListener('gesturestart',preventMobileZoom,{passive:false});
+document.addEventListener('gesturechange',preventMobileZoom,{passive:false});
+document.addEventListener('touchmove',event=>{
+  if(event.touches.length>1)preventMobileZoom(event);
+},{passive:false});
 function refreshSubcategories(){const cat=$('#category').value;const subs=cat?(state.metadata[cat]||[]):[...new Set(Object.values(state.metadata).flat())].sort();$('#subcategory').innerHTML='<option value="">전체 하위 분류</option>'+subs.map(c=>`<option>${esc(c)}</option>`).join('');}
 for(const id of ['category','subcategory','minlevel','level'])$('#'+id).addEventListener('change',()=>{if(id==='category')refreshSubcategories();state.page=0;search();});
 $('#stat').innerHTML='<option value="">이름순</option>'+Object.entries(stats).map(([key,label])=>`<option value="${key}">${label}</option>`).join('');

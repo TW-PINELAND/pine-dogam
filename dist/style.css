@@ -18,3 +18,9 @@ aside{background:#303030;border-color:#505050}.game-tooltip{background:#272727;b
 .tag,.detail-top .tag{background:#414141}.recipe{background:#2b2b2b;border-color:#505050}.linkrow{background:#282828}
 .connection:not(:empty){background:#383838;color:#ddd}.equipment-filters{background:#303030;border-color:#505050}
 .stat-controls select,.stat-controls input{background:#3b3b3b;border-color:#626262}
+
+/* Touch: preserve scrolling, suppress pinch and double-tap page zoom. */
+@media (pointer:coarse){
+  html,body{touch-action:pan-x pan-y}
+  .filters input,.filters select,.stat-controls input,.stat-controls select{font-size:16px}
+}
